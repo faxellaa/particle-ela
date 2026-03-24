@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Perfect Shape Particle Hand Gesture</title>
+    <style>
+        body, html { 
+            margin: 0; padding: 0; width: 100%; height: 100%; 
+            overflow: hidden; background-color: #050505;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+        canvas { display: block; }
+
+        /* UI Modern */
+        .ui-panel {
+            position: absolute; top: 20px; left: 20px;
+            background: rgba(255, 255, 255, 0.05);
+            backdrop-filter: blur(15px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 12px; padding: 15px; color: white;
+            z-index: 10; pointer-events: none;
+        }
+        .ui-panel h2 { margin: 0 0 10px 0; font-size: 14px; color: #00f2ff; letter-spacing: 1px; }
+        .gesture-list { list-style: none; padding: 0; margin: 0; font-size: 12px; line-height: 1.6; }
+        .gesture-list b { color: #00f2ff; margin-right: 10px; }
+
+        #video-container {
+            position: absolute; bottom: 20px; right: 20px;
+            width: 160px; height: 120px; border-radius: 10px;
+            overflow: hidden; border: 2px solid #00f2ff;
+            transform: scaleX(-1);
+        }
+        video { width: 100%; height: 100%; object-fit: cover; }
+        
+        #status {
+            position: absolute; top: 20px; right: 20px;
+            color: #00f2ff; font-weight: bold; text-transform: uppercase;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="ui-panel">
+        <h2>HAND CONTROL</h2>
+        <ul class="gesture-list">
+            <li><b>KEPAL</b> Hello World</li>
+            <li><b>1 JARI</b> Love</li>
+            <li><b>2 JARI</b> Segitiga</li>
+            <li><b>3 JARI</b> Kotak</li>
+            <li><b>4 JARI</b> Bintang</li>
+            <li><b>5 JARI</b> Hempaskan</li>
+        </ul>
+    </div>
+
+    <div id="status">Mencari Tangan...</div>
+
+    <div id="video-container">
+        <video id="input_video"></video>
+    </div>
+    <canvas id="output_canvas"></canvas>
+
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+
+    <script>
+        const videoElement = document.getElementById('input_video');
+        const canvasElement = document.getElementById('output_canvas');
+        const canvasCtx = canvasElement.getContext('2d');
+        const statusText = document.getElementById('status');
+
+        let particles = [];
+        const numParticles = 2000; // Jumlah bulir lebih banyak agar bentuk tajam
+        let width, height;
+
+        function resize() {
+            width = canvasElement.width = window.innerWidth;
+            height = canvasElement.height = window.innerHeight;
+        }
+        window.addEventListener('resize', resize);
+        resize();
+
+        class Particle {
+            constructor() {
+                this.x = Math.random() * width;
+                this.y = Math.random() * height;
+                this.destX = this.x;
+                this.destY = this.y;
+                this.vx = (Math.random() - 0.5) * 10;
+                this.vy = (Math.random() - 0.5) * 10;
+                this.size = Math.random() * 1.5 + 0.5;
+                this.color = Math.random() > 0.5 ? '#00f2ff' : '#ffffff';
+                this.accel = 0.07;
+                this.friction = 0.92;
+            }
+
+            update(isScatter) {
+                if (isScatter) {
+                    this.x += this.vx;
+                    this.y += this.vy;
+                    if (this.x < 0 || this.x > width) this.vx *= -1;
+                    if (this.y < 0 || this.y > height) this.vy *= -1;
+                } else {
+                    this.x += (this.destX - this.x) * this.accel;
+                    this.y += (this.destY - this.y) * this.accel;
+                    // Sedikit getaran agar terlihat hidup
+                    this.x += (Math.random() - 0.5) * 0.5;
+                    this.y += (Math.random() - 0.5) * 0.5;
+                }
+            }
+
+            draw() {
+                canvasCtx.fillStyle = this.color;
+                canvasCtx.beginPath();
+                canvasCtx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
+                canvasCtx.fill();
+            }
+        }
+
+        for (let i = 0; i < numParticles; i++) particles.push(new Particle());
+
+        // --- FUNGSI PEMBENTUK GARIS (OUTLINE) ---
+        function getPointsOnLine(x1, y1, x2, y2, count) {
+            let pts = [];
+            for (let i = 0; i < count; i++) {
+                let t = i / count;
+                pts.push({ x: x1 + t * (x2 - x1), y: y1 + t * (y2 - y1) });
+            }
+            return pts;
+        }
+
+        function generateShape(type) {
+            let pts = [];
+            const cx = width / 2;
+            const cy = height / 2;
+            const size = Math.min(width, height) * 0.25;
+
+            if (type === "hello") {
+                const offCanvas = document.createElement('canvas');
+                const ctx = offCanvas.getContext('2d');
+                offCanvas.width = width;
+                offCanvas.height = height;
+                ctx.fillStyle = "white";
+                // Font dibuat pas ditengah dan responsive
+                const fontSize = Math.min(width/10, 120);
+                ctx.font = `bold ${fontSize}px Arial`;
+                ctx.textAlign = "center";
+                ctx.textBaseline = "middle";
+                ctx.fillText("HELLO WORLD", cx, cy);
+
+                const data = ctx.getImageData(0, 0, width, height).data;
+                for (let y = 0; y < height; y += 4) {
+                    for (let x = 0; x < width; x += 4) {
+                        if (data[(y * width + x) * 4 + 3] > 128) {
+                            pts.push({ x, y });
+                        }
+                    }
+                }
+            } else if (type === "love") {
+                for (let i = 0; i < numParticles; i++) {
+                    let t = (i / numParticles) * Math.PI * 2;
+                    let x = 16 * Math.pow(Math.sin(t), 3);
+                    let y = -(13 * Math.cos(t) - 5 * Math.cos(2*t) - 2 * Math.cos(3*t) - Math.cos(4*t));
+                    pts.push({ x: cx + x * (size/15), y: cy + y * (size/15) });
+                }
+            } else if (type === "triangle") {
+                const h = size * 1.5;
+                const p1 = { x: cx, y: cy - h/2 };
+                const p2 = { x: cx - h/2, y: cy + h/2 };
+                const p3 = { x: cx + h/2, y: cy + h/2 };
+                pts = pts.concat(getPointsOnLine(p1.x, p1.y, p2.x, p2.y, numParticles/3));
+                pts = pts.concat(getPointsOnLine(p2.x, p2.y, p3.x, p3.y, numParticles/3));
+                pts = pts.concat(getPointsOnLine(p3.x, p3.y, p1.x, p1.y, numParticles/3));
+            } else if (type === "square") {
+                const s = size;
+                const p1 = { x: cx - s, y: cy - s };
+                const p2 = { x: cx + s, y: cy - s };
+                const p3 = { x: cx + s, y: cy + s };
+                const p4 = { x: cx - s, y: cy + s };
+                pts = pts.concat(getPointsOnLine(p1.x, p1.y, p2.x, p2.y, numParticles/4));
+                pts = pts.concat(getPointsOnLine(p2.x, p2.y, p3.x, p3.y, numParticles/4));
+                pts = pts.concat(getPointsOnLine(p3.x, p3.y, p4.x, p4.y, numParticles/4));
+                pts = pts.concat(getPointsOnLine(p4.x, p4.y, p1.x, p1.y, numParticles/4));
+            } else if (type === "star") {
+                const spikes = 5;
+                const outerRadius = size * 1.2;
+                const innerRadius = size * 0.5;
+                let starPts = [];
+                for(let i=0; i < spikes * 2; i++) {
+                    let r = (i % 2 === 0) ? outerRadius : innerRadius;
+                    let angle = (i * Math.PI) / spikes - Math.PI/2;
+                    starPts.push({ x: cx + Math.cos(angle) * r, y: cy + Math.sin(angle) * r });
+                }
+                for(let i=0; i < starPts.length; i++) {
+                    let next = (i + 1) % starPts.length;
+                    pts = pts.concat(getPointsOnLine(starPts[i].x, starPts[i].y, starPts[next].x, starPts[next].y, numParticles/10));
+                }
+            }
+
+            // Map target ke partikel
+            for (let i = 0; i < numParticles; i++) {
+                let target = pts[i % pts.length];
+                particles[i].destX = target.x;
+                particles[i].destY = target.y;
+            }
+        }
+
+        function onResults(results) {
+            canvasCtx.fillStyle = 'rgba(5, 5, 5, 0.3)'; // Efek trail
+            canvasCtx.fillRect(0, 0, width, height);
+            
+            let gesture = "hello";
+            let scatter = false;
+
+            if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+                statusText.innerText = "Tangan Terdeteksi";
+                const lm = results.multiHandLandmarks[0];
+                
+                let fingers = 0;
+                // Logika deteksi jari yang lebih stabil
+                if (lm[8].y < lm[6].y) fingers++;  // Telunjuk
+                if (lm[12].y < lm[10].y) fingers++; // Tengah
+                if (lm[16].y < lm[14].y) fingers++; // Manis
+                if (lm[20].y < lm[18].y) fingers++; // Kelingking
+                
+                // Jempol (cek jarak horizontal dari telapak)
+                if (Math.abs(lm[4].x - lm[2].x) > 0.08) fingers++;
+
+                if (fingers === 0) gesture = "hello";
+                else if (fingers === 1) gesture = "love";
+                else if (fingers === 2) gesture = "triangle";
+                else if (fingers === 3) gesture = "square";
+                else if (fingers === 4) gesture = "star";
+                else { scatter = true; gesture = "scatter"; }
+            } else {
+                statusText.innerText = "Gunakan Gerakan Tangan";
+                gesture = "hello";
+            }
+
+            if (!scatter) generateShape(gesture);
+
+            particles.forEach(p => {
+                p.update(scatter);
+                p.draw();
+            });
+        }
+
+        const hands = new Hands({
+            locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+        });
+        hands.setOptions({ maxNumHands: 1, modelComplexity: 1, minDetectionConfidence: 0.5, minTrackingConfidence: 0.8 });
+        hands.onResults(onResults);
+
+        const camera = new Camera(videoElement, {
+            onFrame: async () => { await hands.send({ image: videoElement }); },
+            width: 640, height: 480
+        });
+        camera.start();
+    </script>
+</body>
+</html>

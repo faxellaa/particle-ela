@@ -1,0 +1,337 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>3D Space Particle AI - ASL Vision</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Library untuk 3D & AI -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+    <style>
+        body { margin: 0; overflow: hidden; background: #010103; font-family: 'Inter', sans-serif; }
+        canvas { display: block; }
+        
+        .glass-nav {
+            background: rgba(0, 0, 0, 0.7);
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            box-shadow: 0 0 20px rgba(0,0,0,0.5);
+        }
+
+        #video-container {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            width: 140px;
+            height: 105px;
+            border-radius: 12px;
+            overflow: hidden;
+            border: 2px solid #ff4d6d;
+            transform: scaleX(-1);
+            z-index: 100;
+        }
+        video { width: 100%; height: 100%; object-fit: cover; }
+        
+        .status-text {
+            color: #ff4d6d;
+            text-shadow: 0 0 15px rgba(255, 77, 109, 0.6);
+            font-weight: 800;
+        }
+
+        #loading {
+            position: fixed;
+            inset: 0;
+            background: #000;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+            color: #ff4d6d;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="loading">
+        <div class="animate-spin mb-4 text-4xl">🌌</div>
+        <p class="tracking-[0.3em] text-sm uppercase">Inisialisasi Partikel HD...</p>
+    </div>
+
+    <nav class="fixed top-6 left-1/2 -translate-x-1/2 z-50 glass-nav rounded-full px-6 py-2 flex items-center gap-6 text-[10px] uppercase tracking-widest">
+        <div class="flex items-center gap-2">
+            <div class="w-2 h-2 rounded-full bg-pink-500 animate-pulse"></div>
+            <span class="status-text" id="status-text">MENUNGGU TANGAN</span>
+        </div>
+        <div class="hidden md:flex gap-4 text-gray-400 border-l border-white/10 pl-6">
+            <span>✊ Hati</span>
+            <span>👆 Love</span>
+            <span>🫵 I (Kelingking)</span>
+            <span>🤙 You (Kelingking+Jempol)</span>
+            <span>🤟 ILY</span>
+            <span>🖐️ Ledak</span>
+        </div>
+    </nav>
+
+    <div id="video-container">
+        <video id="webcam" autoplay playsinline></video>
+    </div>
+
+    <script>
+        // --- KONFIGURASI THREE.JS ---
+        let scene, camera, renderer, particleSystem;
+        const particleCount = 8500; 
+        let particlesData = [];
+        let isExploded = true;
+        let currentGesture = "";
+
+        function initThree() {
+            scene = new THREE.Scene();
+            camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 5000);
+            camera.position.z = 950; // Jarak kamera ditambah sedikit lagi supaya aman
+
+            renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+            document.body.appendChild(renderer.domElement);
+
+            const geometry = new THREE.BufferGeometry();
+            const positions = new Float32Array(particleCount * 3);
+            const colors = new Float32Array(particleCount * 3);
+            const sizes = new Float32Array(particleCount);
+
+            const colorPalette = [
+                new THREE.Color('#ff4d6d'),
+                new THREE.Color('#ff85a1'),
+                new THREE.Color('#ffffff'),
+                new THREE.Color('#ff0a54'),
+                new THREE.Color('#7209b7')
+            ];
+
+            for (let i = 0; i < particleCount; i++) {
+                positions[i * 3] = (Math.random() - 0.5) * 2500;
+                positions[i * 3 + 1] = (Math.random() - 0.5) * 2500;
+                positions[i * 3 + 2] = (Math.random() - 0.5) * 2500;
+
+                const color = colorPalette[Math.floor(Math.random() * colorPalette.length)];
+                colors[i * 3] = color.r;
+                colors[i * 3 + 1] = color.g;
+                colors[i * 3 + 2] = color.b;
+
+                sizes[i] = Math.random() * 12 + 6; 
+
+                particlesData.push({
+                    velocity: new THREE.Vector3((Math.random() - 0.5) * 10, (Math.random() - 0.5) * 10, (Math.random() - 0.5) * 10),
+                    target: new THREE.Vector3(positions[i*3], positions[i*3+1], positions[i*3+2])
+                });
+            }
+
+            geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+            geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+            geometry.setAttribute('size', new THREE.BufferAttribute(sizes, 1));
+
+            const material = new THREE.PointsMaterial({
+                size: 11, // Partikel tebal/chunky
+                vertexColors: true,
+                transparent: true,
+                opacity: 0.9,
+                blending: THREE.AdditiveBlending,
+                sizeAttenuation: true
+            });
+
+            particleSystem = new THREE.Points(geometry, material);
+            scene.add(particleSystem);
+        }
+
+        // --- PENJANAAN TITIK BENTUK ---
+        function getShapePoints(text) {
+            const canvas = document.createElement('canvas');
+            const ctx = canvas.getContext('2d');
+            canvas.width = 2400; 
+            canvas.height = 800;
+
+            if (text === "HEART") {
+                ctx.fillStyle = "white";
+                ctx.translate(1200, 400);
+                ctx.beginPath();
+                for (let t = 0; t <= Math.PI * 2; t += 0.01) {
+                    const x = 16 * Math.pow(Math.sin(t), 3);
+                    const y = -(13 * Math.cos(t) - 5 * Math.cos(2*t) - 2 * Math.cos(3*t) - Math.cos(4*t));
+                    ctx.lineTo(x * 16, y * 16); 
+                }
+                ctx.fill();
+            } else {
+                ctx.fillStyle = "white";
+                ctx.font = "900 240px Inter, sans-serif";
+                ctx.textAlign = "center";
+                ctx.textBaseline = "middle";
+                ctx.fillText(text, 1200, 400);
+            }
+
+            const imgData = ctx.getImageData(0, 0, 2400, 800).data;
+            const points = [];
+            for (let y = 0; y < 800; y += 7) {
+                for (let x = 0; x < 2400; x += 7) {
+                    if (imgData[(y * 2400 + x) * 4] > 128) {
+                        // Skala dikecilkan sedikit (0.95) supaya teks panjang tidak terpotong sama sekali
+                        points.push({ x: (x - 1200) * 0.95, y: -(y - 400) * 0.95 });
+                    }
+                }
+            }
+            return points;
+        }
+
+        function updateTargets(type) {
+            isExploded = false;
+            const points = getShapePoints(type);
+            
+            for (let i = 0; i < particleCount; i++) {
+                const pt = points[i % points.length];
+                particlesData[i].target.set(
+                    pt.x + (Math.random() - 0.5) * 15,
+                    pt.y + (Math.random() - 0.5) * 15,
+                    (Math.random() - 0.5) * 60
+                );
+            }
+        }
+
+        function explode() {
+            isExploded = true;
+            for (let i = 0; i < particleCount; i++) {
+                particlesData[i].velocity.set(
+                    (Math.random() - 0.5) * 35,
+                    (Math.random() - 0.5) * 35,
+                    (Math.random() - 0.5) * 35
+                );
+            }
+        }
+
+        // --- GELUNG ANIMASI ---
+        function animate() {
+            requestAnimationFrame(animate);
+
+            const positions = particleSystem.geometry.attributes.position.array;
+            
+            for (let i = 0; i < particleCount; i++) {
+                if (isExploded) {
+                    positions[i * 3] += particlesData[i].velocity.x;
+                    positions[i * 3 + 1] += particlesData[i].velocity.y;
+                    positions[i * 3 + 2] += particlesData[i].velocity.z;
+                    
+                    particlesData[i].velocity.multiplyScalar(0.94);
+                    positions[i * 3] += Math.sin(Date.now() * 0.001 + i) * 0.4;
+                } else {
+                    positions[i * 3] += (particlesData[i].target.x - positions[i * 3]) * 0.13;
+                    positions[i * 3 + 1] += (particlesData[i].target.y - positions[i * 3 + 1]) * 0.13;
+                    positions[i * 3 + 2] += (particlesData[i].target.z - positions[i * 3 + 2]) * 0.13;
+                }
+            }
+
+            particleSystem.geometry.attributes.position.needsUpdate = true;
+            
+            camera.position.x += (mouseX - camera.position.x) * 0.05;
+            camera.position.y += (-mouseY - camera.position.y) * 0.05;
+            camera.lookAt(scene.position);
+
+            renderer.render(scene, camera);
+        }
+
+        let mouseX = 0, mouseY = 0;
+        window.addEventListener('mousemove', (e) => {
+            mouseX = (e.clientX - window.innerWidth / 2) * 0.1;
+            mouseY = (e.clientY - window.innerHeight / 2) * 0.1;
+        });
+
+        // --- LOGIK MEDIAPIPE ---
+        function onResults(results) {
+            document.getElementById('loading').style.display = 'none';
+            const statusEl = document.getElementById('status-text');
+
+            if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+                const gesture = detectGesture(results.multiHandLandmarks[0]);
+                if (gesture && gesture !== currentGesture) {
+                    currentGesture = gesture;
+                    if (gesture === "EXPLODE") {
+                        statusEl.innerText = "💥 BOOM!";
+                        explode();
+                    } else {
+                        statusEl.innerText = gesture === "HEART" ? "❤️ HEART" : gesture;
+                        updateTargets(gesture);
+                    }
+                }
+            } else {
+                if (!isExploded) {
+                    currentGesture = "";
+                    statusEl.innerText = "MENUNGGU TANGAN";
+                    explode();
+                }
+            }
+        }
+
+        function detectGesture(lm) {
+            // Fungsi untuk cek jari tegak
+            const isUp = (t, p) => lm[t].y < lm[p].y;
+            const iU = isUp(8, 6);   // Telunjuk
+            const mU = isUp(12, 10); // Tengah
+            const rU = isUp(16, 14); // Manis
+            const pU = isUp(20, 18); // Kelingking
+            
+            // Pengiraan jarak untuk jempol yang lebih stabil
+            const getDist = (a, b) => Math.sqrt(Math.pow(lm[a].x - lm[b].x, 2) + Math.pow(lm[a].y - lm[b].y, 2));
+            const thumbDistance = getDist(4, 9); // Jarak tip jempol ke pangkal tengah
+            const thumbBaseDist = getDist(2, 9); // Jarak joint jempol ke pangkal tengah
+            const tU = thumbDistance > thumbBaseDist * 1.3; // Jempol dianggap buka jika jaraknya jauh
+
+            // SEMUA JARI TERBUKA -> EXPLODE
+            if (tU && iU && mU && rU && pU) return "EXPLODE";
+            
+            // SEMUA JARI TERTUTUP -> HEART
+            if (!iU && !mU && !rU && !pU && !tU) return "HEART";
+
+            // I LOVE YOU (Jempol + Telunjuk + Kelingking)
+            if (tU && iU && pU && !mU && !rU) return "I LOVE YOU";
+
+            // LOVE (Jempol + Telunjuk)
+            if (tU && iU && !mU && !rU && !pU) return "LOVE";
+
+            // YOU (Permintaan User: Jempol + Kelingking)
+            if (tU && pU && !iU && !mU && !rU) return "YOU";
+
+            // I (Permintaan User: Kelingking Sahaja)
+            if (pU && !tU && !iU && !mU && !rU) return "I";
+
+            return null;
+        }
+
+        window.onload = () => {
+            initThree();
+            animate();
+
+            const hands = new Hands({
+                locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+            });
+            hands.setOptions({ 
+                maxNumHands: 1, 
+                modelComplexity: 1, 
+                minDetectionConfidence: 0.8, 
+                minTrackingConfidence: 0.8 
+            });
+            hands.onResults(onResults);
+
+            const cameraHandler = new Camera(document.getElementById('webcam'), {
+                onFrame: async () => { await hands.send({image: document.getElementById('webcam')}); },
+                width: 640, height: 480
+            });
+            cameraHandler.start();
+        };
+
+        window.onresize = () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        };
+    </script>
+</body>
+</html>
